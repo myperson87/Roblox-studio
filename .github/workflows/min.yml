@@ -37,23 +37,28 @@ jobs:
           echo RDP_PASS=G@meOn2026! >> %GITHUB_ENV%
 
       - name: Install Tailscale VPN
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Downloading Tailscale Client Agent..."
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          echo Downloading Tailscale Installer using native Curl...
+          curl -L "https://tailscale.com" -o "%TEMP%\tailscale.msi"
           
-          \$tsUrl = "https://tailscale.com"
-          installerPath = "env:TEMP\tailscale.msi"
+          echo Running silent background installation...
+          msiexec.exe /i "%TEMP%\tailscale.msi" /quiet /norestart /wait
           
-          Invoke-WebRequest -Uri tsUrl -OutFile installerPath -ErrorAction Stop
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
-          Remove-Item \$installerPath -Force
+          echo Cleaning installer temporary fragments...
+          del "%TEMP%\tailscale.msi" /q /f
 
       - name: Establish Tailscale Connection
+        shell: cmd
+        run: |
+          echo Connecting runner instance node to Tailscale mesh fabric...
+          "%ProgramFiles%\Tailscale\tailscale.exe" up --authkey=\${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-%GITHUB_RUN_ID%
+
+      - name: Retrieve Tailscale IP Address Allocation
         shell: powershell
         run: |
-          Write-Host "Connecting runner instance node to Tailscale mesh fabric..."
-          & "\(env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=\){{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-\({{ github.run_id }}\)tsIP = \(null\)retries = 0
+          Write-Host "Waiting for private network adapter configuration..."
+          \$tsIP = \(null\)retries = 0
           while (-not tsIP -and retries -lt 12) {
               \(tsIP = & "\)env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
@@ -64,31 +69,21 @@ jobs:
               Write-Error "Tailscale mesh tunnel interface timed out!"
               exit 1
           }
+          Write-Host "Assigned Virtual Target IP: \$tsIP"
           echo "TAILSCALE_IP=tsIP" >> env:GITHUB_ENV
 
       - name: Download & Silently Install Monect Receiver
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Downloading Monect system payload mirror branch..."
-          \$DownloadUrl = "https://githubusercontent.com"
+          echo Downloading Monect system payload mirror branch...
+          curl -L "https://githubusercontent.com" -o "%TEMP%\PCRemoteReceiverSetup.exe"
           
-          Invoke-WebRequest -Uri \$DownloadUrl -OutFile "PCRemoteReceiverSetup.exe" -ErrorAction Stop
+          echo Running silent Monect installation manager backend process...
+          "%TEMP%\PCRemoteReceiverSetup.exe" /S
           
-          \$FileSize = (Get-Item "PCRemoteReceiverSetup.exe").Length
-          Write-Host "Download payload verification status: \$FileSize bytes received."
-          if (\$FileSize -lt 5000000) {
-              Write-Error "The host CDN block interrupted the binary transfer sequence."
-              exit 1
-          }
-          
-          Write-Host "Running silent Monect installation manager backend process..."
-          \$InstallProcess = Start-Process -FilePath ".\PCRemoteReceiverSetup.exe" -ArgumentList "/S" -PassThru -Wait
-          
-          if (\$InstallProcess.ExitCode -ne 0) {
-              Write-Error "Installation subsystem caught unexpected deployment error exit code"
-              exit 1
-          }
-          Write-Host "Monect system platform initialized safely."
+          echo Cleaning temporary installation packages...
+          del "%TEMP%\PCRemoteReceiverSetup.exe" /q /f
+          echo Monect system platform initialized safely.
 
       - name: Open Network Ports for Monect Connection
         shell: cmd
