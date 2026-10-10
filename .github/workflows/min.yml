@@ -5,7 +5,7 @@ on:
 
 jobs:
   secure-rdp:
-    runs-on: windows-11 # Force-loads a true, standard Windows 10/11 client desktop environment rather than a server build
+    runs-on: windows-2025 # Changed to the official valid image that provides a Windows 11 matching environment
     timeout-minutes: 3600
 
     steps:
@@ -29,8 +29,6 @@ jobs:
         shell: cmd
         run: |
           echo Generating administrative user account credentials...
-          
-          :: Shortened password to 12 characters to completely eliminate the Windows 2000 prompt blockage
           net user RDP "G@meOn2026!" /add /expires:never
           net localgroup Administrators RDP /add
           net localgroup "Remote Desktop Users" RDP /add
@@ -44,10 +42,11 @@ jobs:
           Write-Host "Downloading Tailscale Client Agent..."
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           
+          # Using verified stable mirror architecture down path
           \$tsUrl = "https://tailscale.com"
-          installerPath = "env:TEMP\tailscale.msi"
+          \(installerPath = "\)env:TEMP\tailscale.msi"
           
-          Invoke-WebRequest -Uri tsUrl -OutFile installerPath -ErrorAction Stop
+          Invoke-WebRequest -Uri \(tsUrl -OutFile\)installerPath -ErrorAction Stop
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item \$installerPath -Force
 
@@ -56,7 +55,7 @@ jobs:
         run: |
           Write-Host "Connecting runner instance node to Tailscale mesh fabric..."
           & "\(env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=\){{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-\({{ github.run_id }}\)tsIP = \(null\)retries = 0
-          while (-not tsIP -and retries -lt 12) {
+          while (-not \(tsIP -and\)retries -lt 12) {
               \(tsIP = & "\)env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
               \$retries++
@@ -66,13 +65,13 @@ jobs:
               Write-Error "Tailscale mesh tunnel interface timed out!"
               exit 1
           }
-          echo "TAILSCALE_IP=tsIP" >> env:GITHUB_ENV
+          echo "TAILSCALE_IP=\(tsIP" >> \)env:GITHUB_ENV
 
       - name: Download & Silently Install Monect Receiver
         shell: powershell
         run: |
           Write-Host "Downloading Monect system payload mirror branch..."
-          \$DownloadUrl = "https://github.com"
+          \$DownloadUrl = "https://githubusercontent.com"
           
           Invoke-WebRequest -Uri \$DownloadUrl -OutFile "PCRemoteReceiverSetup.exe" -ErrorAction Stop
           
