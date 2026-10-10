@@ -10,15 +10,17 @@ jobs:
 
     steps:
       - name: Configure Core RDP Settings
+        shell: powershell
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>\$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Secure Password
+        shell: powershell
         run: |
           Add-Type -AssemblyName System.Security
           \(charSet = @{               Upper   = [char[]](65..90)               Lower   = [char[]](97..122)               Number  = [char[]](48..57)               Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))           }\)rawPassword = @()
@@ -34,14 +36,16 @@ jobs:
           echo "RDP_CREDS=User: RDP | Password: password" >> env:GITHUB_ENV
 
       - name: Install Tailscale VPN
+        shell: powershell
         run: |
-          \$tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          \$tsUrl = "https://tailscale.com"
           installerPath = "env:TEMP\tailscale.msi"
           Invoke-WebRequest -Uri tsUrl -OutFile installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item \$installerPath -Force
 
       - name: Establish Tailscale Connection
+        shell: powershell
         run: |
           & "\(env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=\){{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-\(env:GITHUB_RUN_ID\)tsIP = \(null\)retries = 0
           while (-not tsIP -and retries -lt 10) {
@@ -53,14 +57,19 @@ jobs:
           echo "TAILSCALE_IP=tsIP" >> env:GITHUB_ENV
 
       - name: Install Sunshine Gaming Server & Virtual Drivers
+        shell: powershell
         run: |
           Write-Host "Initializing Chocolatey package installer..."
           Set-ExecutionPolicy Bypass -Scope Process -Force
           [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-          iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org'))
+          
+          # Force check install for choco installer pipeline stability
+          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+              iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org'))
+          }
           
           Write-Host "Downloading Sunshine and Virtual Gamepad Controller Drivers (ViGEmBus)..."
-          # ViGEmBus allows the virtual container to read touch phone controls as a physical Xbox pad
+          # ViGEmBus allows the cloud machine to read touch mobile logs as structural hardware Xbox pads
           choco install sunshine vigembus -y
           
           Write-Host "Opening Sunshine communication port pathways..."
@@ -68,15 +77,16 @@ jobs:
           netsh advfirewall firewall add rule name="Sunshine-Stream" dir=in action=allow protocol=UDP localport=47998,47999,48000,48002,48014
 
       - name: Start Gaming Services and Maintain Connection
+        shell: powershell
         run: |
           Write-Host "`n=== VIRTUAL GAMING INSTANCE IS LIVE ==="
           Write-Host "Tailscale Target Address: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
           Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "Sunshine Web Configuration Dashboard: https://$env:TAILSCALE_IP:47990"
+          Write-Host "Sunshine Web Configuration Dashboard: https://$($env:TAILSCALE_IP):47990"
           Write-Host "======================================`n"
           
-          # Force start Sunshine in the user's active session layer
+          # Force start Sunshine host process configuration
           Start-Process -FilePath "C:\Program Files\Sunshine\sunshine.exe" -WindowStyle Hidden
           
           while (\$true) {
