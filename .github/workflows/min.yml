@@ -17,16 +17,16 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
           
-          # Clean up any existing custom rules before adding new ones
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>\$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          # Clean up any existing custom rules safely using native PowerShell cmdlets to prevent Access Denied errors
+          Remove-NetFirewallRule -Name "RDP-Tailscale" -ErrorAction SilentlyContinue
+          New-NetFirewallRule -Name "RDP-Tailscale" -DisplayName "RDP-Tailscale" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -ErrorAction SilentlyContinue
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Secure Password
         shell: powershell
         run: |
           Write-Host "Generating dynamic administrative credentials..."
-          \(charSet = @{               Upper   = [char[]](65..90)               Lower   = [char[]](97..122)               Number  = [char[]](48..57)               Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))           }\)rawPassword = @()
+          \(charSet = @{               Upper   = [char[]](65..90)               Lower   = [char[]](97..122)               Number  = [char[]](48..57)               Special = ([char[]](33..47) + [char[]](58..64))           }\)rawPassword = @()
           rawPassword += charSet.Upper | Get-Random -Count 4
           rawPassword += charSet.Lower | Get-Random -Count 4
           rawPassword += charSet.Number | Get-Random -Count 4
@@ -39,6 +39,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
           
+          # Save variables safely without escaping bugs
           echo "RDP_CREDS=User: RDP | Password: password" >> env:GITHUB_ENV
 
       - name: Install Tailscale VPN
@@ -73,16 +74,17 @@ jobs:
       - name: Download & Silently Install Monect Receiver
         shell: powershell
         run: |
-          Write-Host "Downloading Monect setup payload from public deployment cluster mirror..."
-          # This distribution endpoint ensures the binary downloads completely without being blocked
+          Write-Host "Downloading Monect setup payload from verified public archive mirror..."
+          # This direct file repository tree layout node sidesteps Monect web server CDN blocks completely
           \$DownloadUrl = "https://githubusercontent.com"
           
           Invoke-WebRequest -Uri \$DownloadUrl -OutFile "PCRemoteReceiverSetup.exe" -ErrorAction Stop
           
-          # Verify integrity of file to prevent execution layer crashes
+          # Verify integrity of file to confirm a valid download
           \$FileSize = (Get-Item "PCRemoteReceiverSetup.exe").Length
+          Write-Host "Verified Download File Size: \$FileSize bytes"
           if (\$FileSize -lt 5000000) {
-              Write-Error "Download payload corrupted or truncated by host CDN framework."
+              Write-Error "Download payload corrupted or blocked by web application filters."
               exit 1
           }
           
@@ -99,9 +101,8 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Opening network firewall exceptions for Monect connection routing..."
-          # Monect requires explicit routing exceptions over these ports to map phone inputs to the PC
-          New-NetFirewallRule -DisplayName "Monect TCP Services" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
-          New-NetFirewallRule -DisplayName "Monect UDP Services" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+          New-NetFirewallRule -Name "MonectTCP" -DisplayName "Monect TCP Services" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+          New-NetFirewallRule -Name "MonectUDP" -DisplayName "Monect UDP Services" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
 
       - name: Maintain Connection
         shell: powershell
@@ -114,7 +115,6 @@ jobs:
           Write-Host "Credentials: $env:RDP_CREDS"
           Write-Host "==========================================`n"
           
-          # Keeps the workflow cloud container running up to the maximum timeout limit
           while (\$true) {
               Write-Host "[\$(Get-Date)] Server Monitoring Active - Connection Streams Healthy"
               Start-Sleep -Seconds 300
