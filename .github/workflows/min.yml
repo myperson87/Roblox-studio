@@ -1,0 +1,71 @@
+name: Spin Up Virtual Monect Instance
+
+on:
+  workflow_dispatch: # Allows you to manually launch the virtual instance from GitHub UI
+
+jobs:
+  deploy-virtual-pc:
+    runs-on: windows-latest # Launches a fresh cloud virtual machine
+    timeout-minutes: 360     # Keeps the instance running for up to 6 hours
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download & Silently Install Monect Receiver
+        shell: powershell
+        run: |
+          Write-Host "Downloading Monect PC Remote installer..."
+          Invoke-WebRequest -Uri "https://www.monect.com/" -OutFile "MoneCT_Remote_Gold.exe"
+          
+          Write-Host "Installing Monect completely silently..."
+          Start-Process -FilePath ".\MoneCT_Remote_Gold.exe" -ArgumentList "/S" -Wait
+          
+          # Allow the background system services to initialize
+          Start-Sleep -Seconds 5
+
+      - name: Configure Windows Firewall for Monect Ports
+        shell: powershell
+        run: |
+          Write-Host "Opening incoming firewall exceptions for Monect Server..."
+          # Monect uses specific UDP/TCP listening instances for the phone connection
+          New-NetFirewallRule -DisplayName "Monect Server Service" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "Monect Server Service UDP" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+
+      - name: Expose Virtual Instance via Secure Tunnel
+        shell: powershell
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }} # Save your free token in GitHub Repository Settings -> Secrets
+        run: |
+          Write-Host "Installing Ngrok tunnel agent..."
+          Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org'))
+          choco install ngrok -y
+          
+          Write-Host "Authenticating Ngrok agent..."
+          ngrok config add-authtoken "$env:NGROK_AUTH_TOKEN"
+          
+          Write-Host "Starting secure tunnel to bypass cloud firewalls..."
+          # Creates a tunnel mapping out the system remote environment endpoints
+          Start-Process ngrok -ArgumentList "tcp 3389" 
+
+      - name: Output Connection System ID and Network Mapping
+        shell: powershell
+        run: |
+          Write-Host "=========================================================="
+          Write-Host "            VIRTUAL MACHINE CONNECTION DETAILS            "
+          Write-Host "=========================================================="
+          
+          # Extract public endpoint details assigned to this runner instance
+          $TunnelInfo = Invoke-RestMethod -Uri "http://127.0.0"
+          $PublicURL = $TunnelInfo.tunnels.public_url
+          
+          Write-Host "Your Public Endpoint URL is: $PublicURL"
+          Write-Host "System Machine Name: $env:COMPUTERNAME"
+          Write-Host "=========================================================="
+          Write-Host "NOTE: To link Monect on your phone over the cloud, you must sign"
+          Write-Host "into your official Monect Account on this virtual instance interface."
+          Write-Host "Keep this Action log tab open to maintain the virtual stream."
+          
+          # Keeps script active so the cloud machine doesn't close down immediately
+          while ($true) { Start-Sleep -Seconds 60 }
+          
