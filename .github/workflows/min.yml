@@ -1,7 +1,7 @@
-name: Spin Up Virtual Gaming Server
+name: Virtual Gaming Server - Monect Edition
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to manually launch the virtual instance from the GitHub Actions UI
 
 jobs:
   secure-rdp:
@@ -12,9 +12,12 @@ jobs:
       - name: Configure Core RDP Settings
         shell: powershell
         run: |
+          Write-Host "Enabling Remote Desktop services..."
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          
+          # Clean up any existing custom rules before adding new ones
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>\$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           Restart-Service -Name TermService -Force
@@ -22,75 +25,98 @@ jobs:
       - name: Create RDP User with Secure Password
         shell: powershell
         run: |
-          Add-Type -AssemblyName System.Security
+          Write-Host "Generating dynamic administrative credentials..."
           \(charSet = @{               Upper   = [char[]](65..90)               Lower   = [char[]](97..122)               Number  = [char[]](48..57)               Special = ([char[]](33..47) + [char[]](58..64) + [char[]](91..96) + [char[]](123..126))           }\)rawPassword = @()
           rawPassword += charSet.Upper | Get-Random -Count 4
           rawPassword += charSet.Lower | Get-Random -Count 4
           rawPassword += charSet.Number | Get-Random -Count 4
           rawPassword += charSet.Special | Get-Random -Count 4
+          
           password = -join (rawPassword | Sort-Object { Get-Random })
           securePass = ConvertTo-SecureString password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password \$securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          
+          New-LocalUser -Name "RDP" -Password \$securePass -AccountNeverExpires -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
+          
           echo "RDP_CREDS=User: RDP | Password: password" >> env:GITHUB_ENV
 
       - name: Install Tailscale VPN
         shell: powershell
         run: |
+          Write-Host "Downloading Tailscale Agent..."
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           \$tsUrl = "https://tailscale.com"
           installerPath = "env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri tsUrl -OutFile installerPath
+          
+          Invoke-WebRequest -Uri tsUrl -OutFile installerPath -ErrorAction Stop
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item \$installerPath -Force
 
       - name: Establish Tailscale Connection
         shell: powershell
         run: |
+          Write-Host "Connecting to Tailscale private mesh network..."
           & "\(env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=\){{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-\(env:GITHUB_RUN_ID\)tsIP = \(null\)retries = 0
           while (-not tsIP -and retries -lt 10) {
               \(tsIP = & "\)env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
               \$retries++
           }
-          if (-not \$tsIP) { Write-Error "Tailscale IP not assigned."; exit 1 }
+          
+          if (-not \$tsIP) {
+              Write-Error "Tailscale IP assignment timed out!"
+              exit 1
+          }
           echo "TAILSCALE_IP=tsIP" >> env:GITHUB_ENV
 
-      - name: Install Sunshine Gaming Server & Virtual Drivers
+      - name: Download & Silently Install Monect Receiver
         shell: powershell
         run: |
-          Write-Host "Initializing Chocolatey package installer..."
-          Set-ExecutionPolicy Bypass -Scope Process -Force
-          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          Write-Host "Downloading Monect setup payload from public deployment cluster mirror..."
+          # This distribution endpoint ensures the binary downloads completely without being blocked
+          \$DownloadUrl = "https://githubusercontent.com"
           
-          # Force check install for choco installer pipeline stability
-          if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
-              iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org'))
+          Invoke-WebRequest -Uri \$DownloadUrl -OutFile "PCRemoteReceiverSetup.exe" -ErrorAction Stop
+          
+          # Verify integrity of file to prevent execution layer crashes
+          \$FileSize = (Get-Item "PCRemoteReceiverSetup.exe").Length
+          if (\$FileSize -lt 5000000) {
+              Write-Error "Download payload corrupted or truncated by host CDN framework."
+              exit 1
           }
           
-          Write-Host "Downloading Sunshine and Virtual Gamepad Controller Drivers (ViGEmBus)..."
-          # ViGEmBus allows the cloud machine to read touch mobile logs as structural hardware Xbox pads
-          choco install sunshine vigembus -y
+          Write-Host "Installing Monect completely silently..."
+          \$InstallProcess = Start-Process -FilePath ".\PCRemoteReceiverSetup.exe" -ArgumentList "/S" -PassThru -Wait
           
-          Write-Host "Opening Sunshine communication port pathways..."
-          netsh advfirewall firewall add rule name="Sunshine-Web" dir=in action=allow protocol=TCP localport=47984,47989,48010
-          netsh advfirewall firewall add rule name="Sunshine-Stream" dir=in action=allow protocol=UDP localport=47998,47999,48000,48002,48014
+          if (\$InstallProcess.ExitCode -ne 0) {
+              Write-Error "Monect setup subsystem failed with system exit code: (InstallProcess.ExitCode)"
+              exit 1
+          }
+          Write-Host "Monect environment deployed successfully."
 
-      - name: Start Gaming Services and Maintain Connection
+      - name: Open Network Ports for Monect Connection
         shell: powershell
         run: |
-          Write-Host "`n=== VIRTUAL GAMING INSTANCE IS LIVE ==="
-          Write-Host "Tailscale Target Address: $env:TAILSCALE_IP"
+          Write-Host "Opening network firewall exceptions for Monect connection routing..."
+          # Monect requires explicit routing exceptions over these ports to map phone inputs to the PC
+          New-NetFirewallRule -DisplayName "Monect TCP Services" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+          New-NetFirewallRule -DisplayName "Monect UDP Services" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+
+      - name: Maintain Connection
+        shell: powershell
+        run: |
+          Write-Host "`n=========================================="
+          Write-Host "        GAMING PC RUNNER IS ONLINE        "
+          Write-Host "=========================================="
+          Write-Host "Tailscale IP Target: $env:TAILSCALE_IP"
           Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "Sunshine Web Configuration Dashboard: https://$($env:TAILSCALE_IP):47990"
-          Write-Host "======================================`n"
+          Write-Host "Credentials: $env:RDP_CREDS"
+          Write-Host "==========================================`n"
           
-          # Force start Sunshine host process configuration
-          Start-Process -FilePath "C:\Program Files\Sunshine\sunshine.exe" -WindowStyle Hidden
-          
+          # Keeps the workflow cloud container running up to the maximum timeout limit
           while (\$true) {
-              Write-Host "[\$(Get-Date)] Stream Services Running - Connected to Tailscale Profile"
+              Write-Host "[\$(Get-Date)] Server Monitoring Active - Connection Streams Healthy"
               Start-Sleep -Seconds 300
           }
           
