@@ -18,16 +18,16 @@ jobs:
           Write-Host "Configuring secure TLS connection layer..."
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-          Write-Host "Downloading Monect PC Remote setup binary..."
-          # Emulating a real browser User-Agent forces Monect's web host to pass the raw EXE installer 
-          $UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          Write-Host "Downloading Monect PC Remote setup binary from GitHub Mirror..."
+          # Using the official Monect GitHub release mirror avoids the website automation block
+          $DownloadUrl = "https://github.com"
           
-          # The direct path down to the server distribution setup
-          Invoke-WebRequest -Uri "https://monect.com" -UserAgent $UserAgent -OutFile "MoneCT_Remote_Gold.exe" -ErrorAction Stop
+          # Perform the direct binary download
+          Invoke-WebRequest -Uri $DownloadUrl -OutFile "PCRemoteReceiverSetup.exe" -ErrorAction Stop
 
           Write-Host "Installing Monect completely silently..."
-          # Executes the verified installation executable behind the scenes
-          $InstallProcess = Start-Process -FilePath ".\MoneCT_Remote_Gold.exe" -ArgumentList "/S" -PassThru -Wait
+          # Executes the official verified installation executable cleanly behind the scenes
+          $InstallProcess = Start-Process -FilePath ".\PCRemoteReceiverSetup.exe" -ArgumentList "/S" -PassThru -Wait
           
           if ($InstallProcess.ExitCode -ne 0) {
               Write-Error "The installation encountered an issue. Exit Code: $($InstallProcess.ExitCode)"
@@ -69,7 +69,7 @@ jobs:
           Write-Host "=========================================================="
           
           # Fetch public endpoint URL details assigned to this Ngrok tunnel agent
-          Start-Sleep -Seconds 5
+          Start-Sleep -Seconds 7
           try {
               $TunnelInfo = Invoke-RestMethod -Uri "http://127.0.0"
               $PublicURL = $TunnelInfo.tunnels.public_url
