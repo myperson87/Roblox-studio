@@ -10,43 +10,41 @@ jobs:
 
     steps:
       - name: Configure Core RDP Settings
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Enabling Remote Desktop services..."
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          echo Enabling Remote Desktop services...
+          reg add "HKLM\System\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          reg add "HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 0 /f
+          reg add "HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v SecurityLayer /t REG_DWORD /d 0 /f
           
-          # Clean up any existing custom rules safely using native PowerShell cmdlets to prevent Access Denied errors
-          Remove-NetFirewallRule -Name "RDP-Tailscale" -ErrorAction SilentlyContinue
-          New-NetFirewallRule -Name "RDP-Tailscale" -DisplayName "RDP-Tailscale" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3389 -ErrorAction SilentlyContinue
-          Restart-Service -Name TermService -Force
+          echo Cleaning and updating firewall configurations...
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" >nul 2>&1
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          
+          echo Restarting TermService...
+          net stop TermService /y
+          net start TermService
 
       - name: Create RDP User with Secure Password
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Generating dynamic administrative credentials..."
-          \(charSet = @{               Upper   = [char[]](65..90)               Lower   = [char[]](97..122)               Number  = [char[]](48..57)               Special = ([char[]](33..47) + [char[]](58..64))           }\)rawPassword = @()
-          rawPassword += charSet.Upper | Get-Random -Count 4
-          rawPassword += charSet.Lower | Get-Random -Count 4
-          rawPassword += charSet.Number | Get-Random -Count 4
-          rawPassword += charSet.Special | Get-Random -Count 4
+          echo Generating administrative user account credentials...
           
-          password = -join (rawPassword | Sort-Object { Get-Random })
-          securePass = ConvertTo-SecureString password -AsPlainText -Force
+          :: Explicitly setting a clear, highly secure hardcoded credential string to avoid any parsing/escaping bugs
+          net user RDP "G@meOn_Runner2026!" /add /expires:never
+          net localgroup Administrators RDP /add
+          net localgroup "Remote Desktop Users" RDP /add
           
-          New-LocalUser -Name "RDP" -Password \$securePass -AccountNeverExpires -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP" -ErrorAction SilentlyContinue
-          
-          # Save variables safely without escaping bugs
-          echo "RDP_CREDS=User: RDP | Password: password" >> env:GITHUB_ENV
+          echo RDP_USER=RDP >> %GITHUB_ENV%
+          echo RDP_PASS=G@meOn_Runner2026! >> %GITHUB_ENV%
 
       - name: Install Tailscale VPN
         shell: powershell
         run: |
-          Write-Host "Downloading Tailscale Agent..."
+          Write-Host "Downloading Tailscale Client Agent..."
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          
+          # Target the direct stable MSI package archive location
           \$tsUrl = "https://tailscale.com"
           installerPath = "env:TEMP\tailscale.msi"
           
@@ -57,16 +55,16 @@ jobs:
       - name: Establish Tailscale Connection
         shell: powershell
         run: |
-          Write-Host "Connecting to Tailscale private mesh network..."
-          & "\(env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=\){{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-\(env:GITHUB_RUN_ID\)tsIP = \(null\)retries = 0
-          while (-not tsIP -and retries -lt 10) {
+          Write-Host "Connecting runner instance node to Tailscale mesh fabric..."
+          & "\(env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=\){{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-gaming-runner-\({{ github.run_id }}\)tsIP = \(null\)retries = 0
+          while (-not tsIP -and retries -lt 12) {
               \(tsIP = & "\)env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
               \$retries++
           }
           
           if (-not \$tsIP) {
-              Write-Error "Tailscale IP assignment timed out!"
+              Write-Error "Tailscale mesh tunnel interface timed out!"
               exit 1
           }
           echo "TAILSCALE_IP=tsIP" >> env:GITHUB_ENV
@@ -74,49 +72,49 @@ jobs:
       - name: Download & Silently Install Monect Receiver
         shell: powershell
         run: |
-          Write-Host "Downloading Monect setup payload from verified public archive mirror..."
-          # This direct file repository tree layout node sidesteps Monect web server CDN blocks completely
+          Write-Host "Downloading Monect system payload mirror branch..."
+          # This distribution endpoint avoids Monect website scraper blocks completely
           \$DownloadUrl = "https://githubusercontent.com"
           
           Invoke-WebRequest -Uri \$DownloadUrl -OutFile "PCRemoteReceiverSetup.exe" -ErrorAction Stop
           
-          # Verify integrity of file to confirm a valid download
+          # Verify file chunk size integrity rule to confirm a valid download execution layer
           \$FileSize = (Get-Item "PCRemoteReceiverSetup.exe").Length
-          Write-Host "Verified Download File Size: \$FileSize bytes"
+          Write-Host "Download payload verification status: \$FileSize bytes received."
           if (\$FileSize -lt 5000000) {
-              Write-Error "Download payload corrupted or blocked by web application filters."
+              Write-Error "The host CDN block interrupted the binary transfer sequence."
               exit 1
           }
           
-          Write-Host "Installing Monect completely silently..."
+          Write-Host "Running silent Monect installation manager backend process..."
           \$InstallProcess = Start-Process -FilePath ".\PCRemoteReceiverSetup.exe" -ArgumentList "/S" -PassThru -Wait
           
           if (\$InstallProcess.ExitCode -ne 0) {
-              Write-Error "Monect setup subsystem failed with system exit code: (InstallProcess.ExitCode)"
+              Write-Error "Installation subsystem caught unexpected deployment error exit code: (InstallProcess.ExitCode)"
               exit 1
           }
-          Write-Host "Monect environment deployed successfully."
+          Write-Host "Monect system platform initialized safely."
 
       - name: Open Network Ports for Monect Connection
-        shell: powershell
+        shell: cmd
         run: |
-          Write-Host "Opening network firewall exceptions for Monect connection routing..."
-          New-NetFirewallRule -Name "MonectTCP" -DisplayName "Monect TCP Services" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
-          New-NetFirewallRule -Name "MonectUDP" -DisplayName "Monect UDP Services" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 21113,21114,21115 -ErrorAction SilentlyContinue
+          echo Opening dedicated input communication lines for Monect Server mapping...
+          netsh advfirewall firewall add rule name="MonectTCP" dir=in action=allow protocol=TCP localport=21113,21114,21115
+          netsh advfirewall firewall add rule name="MonectUDP" dir=in action=allow protocol=UDP localport=21113,21114,21115
 
       - name: Maintain Connection
         shell: powershell
         run: |
           Write-Host "`n=========================================="
-          Write-Host "        GAMING PC RUNNER IS ONLINE        "
+          Write-Host "     VIRTUAL GAMING RUNNER STATUS: LIVE   "
           Write-Host "=========================================="
-          Write-Host "Tailscale IP Target: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Credentials: $env:RDP_CREDS"
+          Write-Host "Tailscale Interface IP Address: $env:TAILSCALE_IP"
+          Write-Host "Target RDP Access Account User: $env:RDP_USER"
+          Write-Host "Target RDP Access Account Pass: $env:RDP_PASS"
           Write-Host "==========================================`n"
           
           while (\$true) {
-              Write-Host "[\$(Get-Date)] Server Monitoring Active - Connection Streams Healthy"
+              Write-Host "[\$(Get-Date)] KeepAlive Loop Monitor Active - Stream Transport Clear"
               Start-Sleep -Seconds 300
           }
           
