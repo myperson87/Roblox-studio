@@ -32,7 +32,7 @@ jobs:
       - name: Create RDP User with Static Password
         run: |
           $password = "nothing@nope@7"
-          $securePass = ConvertTo-SecureString$password -AsPlainText -Force
+          $securePass =$password | ConvertTo-SecureString -AsPlainText -Force
           
           if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
               Remove-LocalUser -Name "RDP"
