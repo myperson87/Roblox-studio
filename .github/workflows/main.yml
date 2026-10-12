@@ -1,4 +1,4 @@
-Name: RDP
+name: RDP
 
 on:
   workflow_dispatch:
@@ -11,7 +11,7 @@ jobs:
     steps:
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
+          # Enable Remote Desktop and disable Network Level Authentication
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
                              -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
@@ -22,11 +22,11 @@ jobs:
           # Remove any existing rule with the same name to avoid duplication
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
           
-          # For testing, allow any incoming connection on port 3389
+          # Allow incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
             dir=in action=allow protocol=TCP localport=3389
 
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          # Restart the Remote Desktop service to ensure changes take effect
           Restart-Service -Name TermService -Force
 
       - name: Create RDP User with Static Password
@@ -34,7 +34,6 @@ jobs:
           $password = "nothing@nope@7"
           $securePass = ConvertTo-SecureString$password -AsPlainText -Force
           
-          # Remove user if it already exists from a previous step/run cache, then recreate
           if (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue) {
               Remove-LocalUser -Name "RDP"
           }
@@ -61,11 +60,7 @@ jobs:
 
       - name: Establish Tailscale Connection
         run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale to assign an IP
-          $tsIP = $null$retries = 0
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID$tsIP = $null$retries = 0
           while (-not $tsIP -and$retries -lt 10) {
               $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
               Start-Sleep -Seconds 5
@@ -82,7 +77,6 @@ jobs:
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
           
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
           $testResult = Test-NetConnection -ComputerName$env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
@@ -98,7 +92,6 @@ jobs:
           Write-Host "Password: nothing@nope@7"
           Write-Host "==================`n"
           
-          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
               Start-Sleep -Seconds 300
